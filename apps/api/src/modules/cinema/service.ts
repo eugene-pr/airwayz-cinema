@@ -24,27 +24,23 @@ const reservationAlreadyHeld = () =>
   conflict("RESERVATION_ALREADY_HELD", "You already have a held reservation — change its seats instead");
 
 // §3.5: lock_timeout and statement_timeout. Someone else holds the lock; the remedy is the usual one.
+// A pool-acquire timeout isn't among them: a saturated server, not a moved seat, so a 500 (§2 #33).
 const LOCK_WAIT_EXCEEDED = new Set(["55P03", "57014"]);
-// §3.5: pg-pool's connectionTimeoutMillis. No SQLSTATE — the request never reached Postgres.
-const POOL_WAIT_EXCEEDED = "timeout exceeded when trying to connect";
 
-// A bounded wait ran out — someone else holds a lock or every connection.
-function waitExceeded(err: unknown) {
-  const { code, message } = (err ?? {}) as { code?: unknown; message?: unknown };
-  return (typeof code === "string" && LOCK_WAIT_EXCEEDED.has(code)) || message === POOL_WAIT_EXCEEDED;
-}
 // No details: the request never got far enough to learn which seat moved (§3.3).
-const orSeatsUnavailable = (err: unknown) =>
-  waitExceeded(err) ? Object.assign(seatsUnavailable(), { cause: err }) : err;
+function orSeatsUnavailable(err: unknown) {
+  const { code } = (err ?? {}) as { code?: unknown };
+  return typeof code === "string" && LOCK_WAIT_EXCEEDED.has(code)
+    ? Object.assign(seatsUnavailable(), { cause: err })
+    : err;
+}
 
 export function createCinemaService({ pool }: CinemaServiceDeps) {
   const repository = createCinemaRepository(pool);
 
   // READ COMMITTED; the advisory locks taken inside are released by COMMIT or ROLLBACK.
   async function inTransaction<T>(work: (tx: CinemaRepository) => Promise<T>): Promise<T> {
-    const client = await pool.connect().catch((err: unknown) => {
-      throw orSeatsUnavailable(err);
-    });
+    const client = await pool.connect();
     try {
       await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
       const result = await work(createCinemaRepository(client));
@@ -59,7 +55,7 @@ export function createCinemaService({ pool }: CinemaServiceDeps) {
   }
 
   // Seats never change after seed, so their rows are read before any lock is taken.
-  // Inside the transaction, so pool.connect() is the write path's only pool wait (§3.5).
+  // Inside the transaction, so pool.connect() is the write path's only pool wait — a 500 when it times out (§2 #33).
   async function rowsOf(tx: CinemaRepository, seatIds: readonly string[]): Promise<number[]> {
     // The service also serves callers that bypass the route's selectionRequest schema.
     if (seatIds.length === 0) throw badRequest("Select at least one seat");
@@ -98,8 +94,8 @@ export function createCinemaService({ pool }: CinemaServiceDeps) {
     const occupied = [...new Set(seatIds)].filter((id) => seats.find((seat) => seat.id === id)?.occupied);
     if (occupied.length > 0) throw seatsUnavailable({ seatIds: occupied });
 
+    // Rule 1 already passed above, so any violation left is Rule 2.
     const violation = validateSelection(seats, seatIds);
-    if (violation?.rule === 1) throw badRequest("Seats must be consecutive and in one row", { rule: 1 });
     // A gap: the isolated seat isn't one the client asked for, so there's nothing to name (§3.3).
     if (violation) throw seatsUnavailable();
   }

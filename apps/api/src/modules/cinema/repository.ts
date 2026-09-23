@@ -1,5 +1,5 @@
 import type pg from "pg";
-import type { ReservationStatus, SeatWithReservation, StoredReservation } from "./types";
+import type { SeatWithReservation, StoredReservation, StoredReservationStatus } from "./types";
 
 // Advisory-lock namespaces (ARCHITECTURE §3.1): user keys and seat-row keys never collide.
 export const USER_LOCK_NAMESPACE = 1;
@@ -20,7 +20,7 @@ const reservationQuery = (where: string) =>
 type ReservationRow = {
   id: string;
   user_id: string;
-  status: ReservationStatus;
+  status: StoredReservationStatus;
   expires_at: Date;
   seat_ids: string[];
   row_number: number | null;
@@ -46,7 +46,7 @@ export function createCinemaRepository(db: pg.Pool | pg.ClientBase) {
         id: string;
         row_label: string;
         seat_number: number;
-        hold_status: ReservationStatus | null;
+        hold_status: StoredReservationStatus | null;
         expires_at: Date | null;
       }>(
         `WITH t AS (SELECT clock_timestamp() AS checked_at)

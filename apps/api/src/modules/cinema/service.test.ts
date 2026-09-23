@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AppError } from "../../middleware/app-error";
 import { insertUser, testPool } from "../../test-db";
 import type { Actor } from "../auth";
 import { type CinemaService, createCinemaService } from "./index";
@@ -294,15 +295,15 @@ describe("createReservation", () => {
     }
   });
 
-  it("bounded pool wait: every connection checked out, fails SEATS_UNAVAILABLE instead of hanging", async () => {
+  // §2 #33: a saturated pool isn't a moved seat, so it stays a plain error — a 500.
+  it("bounded pool wait: every connection checked out, fails fast as a server error, not a conflict", async () => {
     const tinyPool = await testPool({ max: 1, connectionTimeoutMillis: 200 });
     const tiny = createCinemaService({ pool: tinyPool });
     const hog = await tinyPool.connect();
     try {
-      await expect(tiny.createReservation(await newActor(), ids("A1"))).rejects.toMatchObject({
-        code: "SEATS_UNAVAILABLE",
-        details: undefined,
-      });
+      const failure = await tiny.createReservation(await newActor(), ids("A1")).catch((err: unknown) => err);
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).not.toBeInstanceOf(AppError);
     } finally {
       hog.release();
       await tinyPool.end();
@@ -352,6 +353,30 @@ describe("replaceReservationSeats", () => {
       held.id,
     ]);
     expect(rows[0]?.expires_at.toISOString()).toBe(held.expiresAt);
+  });
+
+  it("rejects a non-consecutive replacement (Rule 1), keeping the previous seats", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+
+    await expect(cinema.replaceReservationSeats(alice, held.id, ids("A4", "A6"))).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      details: { rule: 1 },
+    });
+    expect(await claimedCodesOf(held.id)).toEqual(["A1", "A2"]);
+  });
+
+  // A2 only becomes an isolated seat once the replacement releases Alice's own A2–A3.
+  it("rejects a replacement that isolates a seat its own release frees (Rule 2)", async () => {
+    const [alice, bob] = [await newActor(), await newActor()];
+    await cinema.createReservation(bob, ids("A1"));
+    const held = await cinema.createReservation(alice, ids("A2", "A3"));
+
+    await expect(cinema.replaceReservationSeats(alice, held.id, ids("A3", "A4"))).rejects.toMatchObject({
+      code: "SEATS_UNAVAILABLE",
+      details: undefined,
+    });
+    expect(await claimedCodesOf(held.id)).toEqual(["A2", "A3"]);
   });
 
   it("concurrent replacements by the same user leave one intact selection with no leftover claims", async () => {
