@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import pg from "pg";
 import { pino } from "pino";
+import { seedSeats } from "../../../database/seeds/seats";
 import { migrate } from "./migrate";
 
 // Integration tests only: the db-test compose service (tmpfs, port 5433).
@@ -12,7 +13,10 @@ export const silentLogger = pino({ level: "silent" });
 
 export async function testPool() {
   await migrate(TEST_DATABASE_URL, silentLogger);
-  return new pg.Pool({ connectionString: TEST_DATABASE_URL });
+  const pool = new pg.Pool({ connectionString: TEST_DATABASE_URL });
+  // Seats are the fixed seating map, not per-file fixtures: every file shares them.
+  await seedSeats(pool);
+  return pool;
 }
 
 // Fixture insert. Unique email per call, so test files never collide.

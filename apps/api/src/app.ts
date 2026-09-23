@@ -7,6 +7,7 @@ import { authenticate } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
 import { requestLogger } from "./middleware/request-logger";
 import { authRouter, createAuthService } from "./modules/auth";
+import { cinemaRouter, createCinemaService } from "./modules/cinema";
 
 export interface AppDeps {
   pool: pg.Pool;
@@ -18,6 +19,7 @@ export interface AppDeps {
 export function createApp({ pool, logger, jwtSecret }: AppDeps) {
   const auth = createAuthService({ pool, jwtSecret });
   const requireActor = authenticate(auth);
+  const cinema = createCinemaService({ pool });
 
   const app = express();
   app.use(requestLogger(logger));
@@ -26,6 +28,7 @@ export function createApp({ pool, logger, jwtSecret }: AppDeps) {
 
   app.use(healthRouter(pool));
   app.use(authRouter(auth, requireActor));
+  app.use(cinemaRouter(cinema, requireActor));
 
   app.use("/api", notFoundHandler);
   app.use(errorHandler);

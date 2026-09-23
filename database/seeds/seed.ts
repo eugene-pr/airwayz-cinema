@@ -1,6 +1,7 @@
 // Idempotent, re-runnable: `npm run seed`. Assumes migrations have run.
 import bcrypt from "bcryptjs";
 import pg from "pg";
+import { seedSeats } from "./seats";
 
 // Dev logins (ARCHITECTURE §2 #28). No registration exists (ARCHITECTURE §2 #8), so these are the only users.
 const USERS = [
@@ -25,6 +26,7 @@ try {
     );
     process.stdout.write(`users: ${email} ${rowCount ? "inserted" : "already present"}\n`);
   }
+  process.stdout.write(`seats: ${await seedSeats(client)} inserted\n`);
   await client.query("COMMIT");
 } catch (err) {
   await client.query("ROLLBACK");
