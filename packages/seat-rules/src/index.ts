@@ -1,2 +1,44 @@
-// Rule 1 / Rule 2 land in ticket 02.
-export {};
+// Occupied means reserved or booked by someone else. Mark the user's current seats as unoccupied.
+// Include the whole selected row, numbered 1 through N.
+export type Seat = { id: string; rowNumber: number; seatNumber: number; occupied: boolean };
+export type RuleViolation = { rule: 1 } | { rule: 2; isolatedSeatNumbers: number[] };
+
+// Check Rule 1, then Rule 2, even for a single seat.
+// Throw for an empty selection, unknown seat ID, or occupied seat.
+export function validateSelection(seats: readonly Seat[], seatIds: readonly string[]): RuleViolation | null {
+  const byId = new Map(seats.map((seat) => [seat.id, seat]));
+  const selected = seatIds.map((id) => {
+    const seat = byId.get(id);
+    if (!seat) throw new Error(`unknown seat id: ${id}`);
+    if (seat.occupied) throw new Error(`selected seat is occupied: ${id}`);
+    return seat;
+  });
+  const first = selected[0];
+  if (!first) throw new Error("empty selection");
+
+  if (!isRule1Met(selected)) return { rule: 1 };
+
+  const row = seats.filter((seat) => seat.rowNumber === first.rowNumber);
+  const occupied = new Set(row.filter((seat) => seat.occupied).map((seat) => seat.seatNumber));
+  const numbers = selected.map((seat) => seat.seatNumber);
+  const lo = Math.min(...numbers);
+  const hi = Math.max(...numbers);
+
+  // Rule 2: only seats just outside the selection can become newly isolated.
+  // Reject an empty neighbour if its other side is occupied. Ignore existing isolated seats.
+  // Row edges pass because there is no occupied seat beyond the row.
+  const isIsolated = (n: number, farSide: number) => !occupied.has(n) && occupied.has(farSide);
+  const isolatedSeatNumbers = [
+    ...(isIsolated(lo - 1, lo - 2) ? [lo - 1] : []),
+    ...(isIsolated(hi + 1, hi + 2) ? [hi + 1] : []),
+  ];
+  return isolatedSeatNumbers.length > 0 ? { rule: 2, isolatedSeatNumbers } : null;
+}
+
+// Rule 1: seats must be together in one row, with no gaps or repeats.
+function isRule1Met(selected: readonly Seat[]): boolean {
+  const rowNumber = selected[0]?.rowNumber;
+  if (selected.some((seat) => seat.rowNumber !== rowNumber)) return false;
+  const numbers = selected.map((seat) => seat.seatNumber).sort((a, b) => a - b);
+  return numbers.every((n, i) => i === 0 || n === (numbers[i - 1] as number) + 1);
+}
