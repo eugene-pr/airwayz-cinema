@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: cinema
+      POSTGRES_PASSWORD: cinema
+      POSTGRES_DB: cinema
+    ports: ["5432:5432"]
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinema -d cinema"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Integration tests only (ARCHITECTURE §7). tmpfs: nothing persists, never shares dev data.
+  db-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: cinema
+      POSTGRES_PASSWORD: cinema
+      POSTGRES_DB: cinema_test
+    ports: ["5433:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinema -d cinema_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    env_file:
+      - path: .env.example
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://cinema:cinema@db:5432/cinema
+    ports: ["3000:3000"]
+    depends_on:
+      db: { condition: service_healthy }
+
+  web:
+    build: { context: ., dockerfile: apps/web/Dockerfile }
+    environment:
+      API_URL: http://api:3000
+    ports: ["5173:5173"]
+    depends_on: [api]
+
+volumes:
+  db-data:

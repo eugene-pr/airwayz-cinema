@@ -1,0 +1,17 @@
+{
+  "name": "cinema",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "npm run typecheck && npm run lint && npm test",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "biome check .",
+    "test": "vitest run --passWithNoTests",
+    "dev": "docker compose up --build",
+    "migrate": "node --env-file=.env.example --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js up -m database/migrations"
+  }
+}

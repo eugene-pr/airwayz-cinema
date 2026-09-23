@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": { "includes": ["**", "!**/package-lock.json"] },
+  "formatter": { "indentStyle": "space", "lineWidth": 110 },
+  "linter": { "rules": { "preset": "recommended" } },
+  "overrides": [
+    {
+      "includes": ["apps/api/**"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noConsole": "error" },
+          "style": { "noProcessEnv": "error" }
+        }
+      }
+    },
+    {
+      "includes": ["apps/api/src/config.ts"],
+      "linter": { "rules": { "style": { "noProcessEnv": "off" } } }
+    }
+  ]
+}
