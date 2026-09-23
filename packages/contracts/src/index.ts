@@ -51,3 +51,7 @@ export const reservationResponse = z.object({
   seatIds: z.array(z.uuid()),
 });
 export type ReservationResponse = z.infer<typeof reservationResponse>;
+
+// The actor's own reservations only (ARCHITECTURE §10).
+export const reservationListResponse = z.object({ items: z.array(reservationResponse) });
+export type ReservationListResponse = z.infer<typeof reservationListResponse>;

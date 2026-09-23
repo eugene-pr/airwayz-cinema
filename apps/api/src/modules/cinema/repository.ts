@@ -112,6 +112,30 @@ export function createCinemaRepository(db: pg.Pool | pg.ClientBase) {
       return rows[0] && toReservation(rows[0]);
     },
 
+    // Unexpired held plus completed; a completed one never consults its deadline (§6).
+    async listReservationsOf(userId: string): Promise<StoredReservation[]> {
+      const { rows } = await db.query<ReservationRow>(
+        `${reservationQuery(
+          `h.user_id = $1 AND (h.status = 'completed' OR (h.status = 'held' AND h.expires_at > clock_timestamp()))`,
+        )} ORDER BY h.created_at`,
+        [userId],
+      );
+      return rows.map(toReservation);
+    },
+
+    async completeReservation(id: string): Promise<void> {
+      await db.query("UPDATE holds SET status = 'completed' WHERE id = $1", [id]);
+    },
+
+    // Cancel (§11): release this reservation's claims — only its own — and mark it cancelled.
+    async cancelReservation(id: string): Promise<void> {
+      await db.query(
+        `WITH released AS (DELETE FROM seat_claims WHERE hold_id = $1)
+         UPDATE holds SET status = 'cancelled' WHERE id = $1`,
+        [id],
+      );
+    },
+
     // Reclamation (§4): expire every held hold in these seat rows whose deadline has passed,
     // and release its claims. Callers hold the row locks.
     async reclaimExpired(rowNumbers: readonly number[], checkedAt: Date): Promise<void> {

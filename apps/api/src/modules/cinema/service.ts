@@ -1,4 +1,9 @@
-import type { ReservationResponse, SeatingMapResponse, SeatStatus } from "@cinema/contracts";
+import type {
+  ReservationListResponse,
+  ReservationResponse,
+  SeatingMapResponse,
+  SeatStatus,
+} from "@cinema/contracts";
 import { validateRule1, validateSelection } from "@cinema/seat-rules";
 import type pg from "pg";
 import { badRequest, conflict, notFound } from "../../middleware/app-error";
@@ -100,6 +105,24 @@ export function createCinemaService({ pool }: CinemaServiceDeps) {
     if (violation) throw seatsUnavailable();
   }
 
+  // §3.1 user lock, then the owner check. Someone else's reservation doesn't exist, as far as
+  // the actor can tell (§10).
+  async function lockOwned(tx: CinemaRepository, actor: Actor, reservationId: string) {
+    await tx.lockUser(actor.userId);
+    const target = await tx.findReservation(reservationId);
+    if (target?.userId !== actor.userId) throw notFound();
+    return target;
+  }
+
+  // Row locks, checked_at, reclamation, then a re-read: reclamation may just have cancelled it,
+  // including when its deadline passed while this transaction waited on a lock (§4).
+  async function lockHeld(tx: CinemaRepository, target: StoredReservation, extraRows: number[] = []) {
+    const checkedAt = await lockRowsAndReclaim(tx, [...extraRows, ...rowOf(target)]);
+    const current = await tx.findReservation(target.id);
+    // Reclamation already cancels an expired hold; the deadline check states §4's rule outright.
+    if (current?.status !== "held" || current.expiresAt <= checkedAt) throw reservationNotHeld();
+  }
+
   async function readBack(tx: CinemaRepository, id: string): Promise<ReservationResponse> {
     const reservation = await tx.findReservation(id);
     if (!reservation) throw new Error(`reservation ${id} vanished inside its own transaction`);
@@ -156,21 +179,42 @@ export function createCinemaService({ pool }: CinemaServiceDeps) {
     ): Promise<ReservationResponse> {
       return inTransaction(async (tx) => {
         const requestedRows = await rowsOf(tx, seatIds);
-        await tx.lockUser(actor.userId);
-        const target = await tx.findReservation(reservationId);
-        // Someone else's reservation doesn't exist, as far as the actor can tell (§10).
-        if (target?.userId !== actor.userId) throw notFound();
-        await lockRowsAndReclaim(tx, [...requestedRows, ...rowOf(target)]);
-
-        // Re-read: reclamation may just have cancelled it.
-        const current = await tx.findReservation(reservationId);
-        if (current?.status !== "held") throw reservationNotHeld();
+        const target = await lockOwned(tx, actor, reservationId);
+        await lockHeld(tx, target, requestedRows);
 
         await validate(tx, requestedRows, seatIds, reservationId);
         await tx.releaseSeats(reservationId);
         await tx.claimSeats(reservationId, seatIds);
         return readBack(tx, reservationId);
       });
+    },
+
+    // Idempotent for the owner (§4): the hold id is the key, so a retry after a lost response
+    // gets the same completed reservation back, with no write.
+    async completeReservation(actor: Actor, reservationId: string): Promise<ReservationResponse> {
+      return inTransaction(async (tx) => {
+        const target = await lockOwned(tx, actor, reservationId);
+        // Completed is final — nothing moves a hold out of it — so no row lock is needed to trust it.
+        if (target.status === "completed") return toResponse(target);
+        await lockHeld(tx, target);
+        await tx.completeReservation(reservationId);
+        return readBack(tx, reservationId);
+      });
+    },
+
+    // Releases only this reservation's claims, so a later holder's seats are never touched (§4).
+    async cancelReservation(actor: Actor, reservationId: string): Promise<void> {
+      await inTransaction(async (tx) => {
+        const target = await lockOwned(tx, actor, reservationId);
+        await lockHeld(tx, target);
+        await tx.cancelReservation(reservationId);
+      });
+    },
+
+    // The actor's own only; the client joins these seat ids onto the seating map (§10).
+    async listReservations(actor: Actor): Promise<ReservationListResponse> {
+      const reservations = await repository.listReservationsOf(actor.userId);
+      return { items: reservations.map(toResponse) };
     },
   };
 }

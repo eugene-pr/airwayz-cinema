@@ -95,8 +95,26 @@ function fulfilledAndRejected<T>(results: PromiseSettledResult<T>[]) {
   return { fulfilled, rejected };
 }
 
-// ARCHITECTURE §7's two "Status derivation" cases (held then expired; completed stays
-// booked) need completion; they land with ticket 06.
+// Any UPDATE to a hold row changes its xmin, so an unchanged xmin proves nothing was written.
+async function xminOf(reservationId: string) {
+  const { rows } = await pool.query<{ xmin: string }>("SELECT xmin::text FROM holds WHERE id = $1", [
+    reservationId,
+  ]);
+  return rows[0]?.xmin;
+}
+
+// A service whose clock_timestamp() — and so checked_at — is frozen at `at`. The shim schema
+// precedes pg_catalog on search_path, so it shadows the built-in. Test-only.
+async function serviceFrozenAt(at: string) {
+  await pool.query("CREATE SCHEMA IF NOT EXISTS test_clock");
+  await pool.query(
+    `CREATE OR REPLACE FUNCTION test_clock.clock_timestamp() RETURNS timestamptz
+     LANGUAGE sql AS $$ SELECT '${at}'::timestamptz $$`,
+  );
+  const frozenPool = await testPool({ options: "-c search_path=test_clock,pg_catalog,public" });
+  return { frozen: createCinemaService({ pool: frozenPool }), end: () => frozenPool.end() };
+}
+
 describe("getSeatingMap", () => {
   it("returns all 115 seats in row order, with codes like A5 and K3", async () => {
     const { items } = await cinema.getSeatingMap(actor);
@@ -126,6 +144,28 @@ describe("getSeatingMap", () => {
     const { items } = await cinema.getSeatingMap(actor);
 
     expect(new Set(items.map((s) => s.status))).toEqual(new Set(["available"]));
+  });
+
+  it("status derivation, held then expired: reserved, then available the moment the deadline passes — no write", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1"));
+    expect(await statuses("A1")).toEqual(["reserved"]);
+
+    await expire(held.id);
+
+    expect(await statuses("A1")).toEqual(["available"]);
+    expect(await holdStatusesOf(alice)).toEqual(["held"]);
+  });
+
+  it("status derivation, completed is permanent: booked, and still booked after the original deadline", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1"));
+    await cinema.completeReservation(alice, held.id);
+    expect(await statuses("A1")).toEqual(["booked"]);
+
+    await expire(held.id);
+
+    expect(await statuses("A1")).toEqual(["booked"]);
   });
 });
 
@@ -446,5 +486,214 @@ describe("replaceReservationSeats", () => {
       "available",
       "available",
     ]);
+  });
+
+  it("a completed reservation fails RESERVATION_NOT_HELD, keeping its seats", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+    await cinema.completeReservation(alice, held.id);
+
+    await expect(cinema.replaceReservationSeats(alice, held.id, ids("A3", "A4"))).rejects.toMatchObject({
+      code: "RESERVATION_NOT_HELD",
+    });
+    expect(await claimedCodesOf(held.id)).toEqual(["A1", "A2"]);
+  });
+});
+
+describe("completeReservation", () => {
+  it("completes an owned held reservation; its seats read booked", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+
+    const completed = await cinema.completeReservation(alice, held.id);
+
+    expect(completed).toEqual({ ...held, status: "completed" });
+    expect(await statuses("A1", "A2")).toEqual(["booked", "booked"]);
+  });
+
+  it("after expiry, before reclamation, fails RESERVATION_NOT_HELD; the seats stay available", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+    await expire(held.id);
+
+    await expect(cinema.completeReservation(alice, held.id)).rejects.toMatchObject({
+      code: "RESERVATION_NOT_HELD",
+    });
+    expect(await statuses("A1", "A2")).toEqual(["available", "available"]);
+  });
+
+  it("after another user reclaims the seats, fails; the new user's hold and claims stay intact", async () => {
+    const [alice, bob] = [await newActor(), await newActor()];
+    const alices = await cinema.createReservation(alice, ids("A1", "A2"));
+    await expire(alices.id);
+    const bobs = await cinema.createReservation(bob, ids("A1", "A2"));
+
+    await expect(cinema.completeReservation(alice, alices.id)).rejects.toMatchObject({
+      code: "RESERVATION_NOT_HELD",
+    });
+    expect(await holdStatusesOf(bob)).toEqual(["held"]);
+    expect(await claimedCodesOf(bobs.id)).toEqual(["A1", "A2"]);
+  });
+
+  it("expiry during a lock wait: begins before the deadline, locks acquired after it — fails", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1"));
+    await pool.query("UPDATE holds SET expires_at = clock_timestamp() + interval '300 ms' WHERE id = $1", [
+      held.id,
+    ]);
+    const release = await lockRow(1);
+
+    const completing = cinema.completeReservation(alice, held.id);
+    await waitForLockWaiters(1);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await release();
+
+    await expect(completing).rejects.toMatchObject({ code: "RESERVATION_NOT_HELD" });
+  });
+
+  it("expiry exactly at checked_at fails (expires_at <= checked_at)", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1"));
+    const { rows } = await pool.query<{ at: string }>(
+      "SELECT expires_at::text AS at FROM holds WHERE id = $1",
+      [held.id],
+    );
+    const { frozen, end } = await serviceFrozenAt(rows[0]?.at ?? "");
+    try {
+      await expect(frozen.completeReservation(alice, held.id)).rejects.toMatchObject({
+        code: "RESERVATION_NOT_HELD",
+      });
+    } finally {
+      await end();
+    }
+  });
+
+  it("another user's reservation is notFound, not forbidden", async () => {
+    const [alice, bob] = [await newActor(), await newActor()];
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+
+    await expect(cinema.completeReservation(bob, held.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await holdStatusesOf(alice)).toEqual(["held"]);
+  });
+
+  it("is idempotent: completing an already-completed own reservation returns it and writes nothing", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+    const first = await cinema.completeReservation(alice, held.id);
+    const xmin = await xminOf(held.id);
+
+    const retried = await cinema.completeReservation(alice, held.id);
+
+    expect(retried).toEqual(first);
+    expect(await xminOf(held.id)).toBe(xmin);
+    expect(await claimedCodesOf(held.id)).toEqual(["A1", "A2"]);
+  });
+
+  it("a cancelled reservation fails RESERVATION_NOT_HELD", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+    await cinema.cancelReservation(alice, held.id);
+
+    await expect(cinema.completeReservation(alice, held.id)).rejects.toMatchObject({
+      code: "RESERVATION_NOT_HELD",
+    });
+  });
+
+  it("another user's completed reservation is still notFound", async () => {
+    const [alice, bob] = [await newActor(), await newActor()];
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+    await cinema.completeReservation(alice, held.id);
+
+    await expect(cinema.completeReservation(bob, held.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("cancelReservation", () => {
+  it("cancels an owned unexpired hold, releasing its seats", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+
+    await cinema.cancelReservation(alice, held.id);
+
+    expect(await holdStatusesOf(alice)).toEqual(["cancelled"]);
+    expect(await claimedCodesOf(held.id)).toEqual([]);
+    expect(await statuses("A1", "A2")).toEqual(["available", "available"]);
+  });
+
+  it("another user's reservation is notFound; nothing is released", async () => {
+    const [alice, bob] = [await newActor(), await newActor()];
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+
+    await expect(cinema.cancelReservation(bob, held.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await claimedCodesOf(held.id)).toEqual(["A1", "A2"]);
+  });
+
+  it("a completed reservation fails RESERVATION_NOT_HELD, keeping its seats", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+    await cinema.completeReservation(alice, held.id);
+
+    await expect(cinema.cancelReservation(alice, held.id)).rejects.toMatchObject({
+      code: "RESERVATION_NOT_HELD",
+    });
+    expect(await claimedCodesOf(held.id)).toEqual(["A1", "A2"]);
+    expect(await statuses("A1", "A2")).toEqual(["booked", "booked"]);
+  });
+
+  it("an expired hold, before reclamation, fails RESERVATION_NOT_HELD", async () => {
+    const alice = await newActor();
+    const held = await cinema.createReservation(alice, ids("A1", "A2"));
+    await expire(held.id);
+
+    await expect(cinema.cancelReservation(alice, held.id)).rejects.toMatchObject({
+      code: "RESERVATION_NOT_HELD",
+    });
+    expect(await holdStatusesOf(alice)).toEqual(["held"]);
+  });
+
+  it("targeting an expired hold another user has since reclaimed fails, leaving their claims intact", async () => {
+    const [alice, bob] = [await newActor(), await newActor()];
+    const alices = await cinema.createReservation(alice, ids("A1", "A2"));
+    await expire(alices.id);
+    const bobs = await cinema.createReservation(bob, ids("A1", "A2"));
+
+    await expect(cinema.cancelReservation(alice, alices.id)).rejects.toMatchObject({
+      code: "RESERVATION_NOT_HELD",
+    });
+    expect(await claimedCodesOf(bobs.id)).toEqual(["A1", "A2"]);
+  });
+
+  it("an already cancelled hold fails RESERVATION_NOT_HELD, leaving a later holder's claims intact", async () => {
+    const [alice, bob] = [await newActor(), await newActor()];
+    const alices = await cinema.createReservation(alice, ids("A1", "A2"));
+    await cinema.cancelReservation(alice, alices.id);
+    const bobs = await cinema.createReservation(bob, ids("A1", "A2"));
+
+    await expect(cinema.cancelReservation(alice, alices.id)).rejects.toMatchObject({
+      code: "RESERVATION_NOT_HELD",
+    });
+    expect(await claimedCodesOf(bobs.id)).toEqual(["A1", "A2"]);
+  });
+});
+
+describe("listReservations", () => {
+  it("own reservations only: the actor's unexpired hold and completed ones, with seat ids", async () => {
+    const [alice, bob] = [await newActor(), await newActor()];
+    const expired = await cinema.createReservation(alice, ids("A1"));
+    await expire(expired.id);
+    const cancelled = await cinema.createReservation(alice, ids("B1"));
+    await cinema.cancelReservation(alice, cancelled.id);
+    const completed = await cinema.completeReservation(
+      alice,
+      (await cinema.createReservation(alice, ids("C1", "C2"))).id,
+    );
+    const held = await cinema.createReservation(alice, ids("D1"));
+    const bobs = await cinema.createReservation(bob, ids("E1"));
+    await cinema.completeReservation(bob, bobs.id);
+    await cinema.createReservation(bob, ids("F1"));
+
+    const { items } = await cinema.listReservations(alice);
+
+    expect(items).toEqual([completed, held]);
   });
 });
