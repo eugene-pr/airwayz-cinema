@@ -1,15 +1,114 @@
-import type { SeatingMapResponse, SeatStatus } from "@cinema/contracts";
+import type { ReservationResponse, SeatingMapResponse, SeatStatus } from "@cinema/contracts";
+import { validateRule1, validateSelection } from "@cinema/seat-rules";
 import type pg from "pg";
+import { badRequest, conflict, notFound } from "../../middleware/app-error";
 import type { Actor } from "../auth";
-import { createCinemaRepository } from "./repository";
-import type { SeatWithReservation } from "./types";
+import { type CinemaRepository, createCinemaRepository } from "./repository";
+import type { SeatWithReservation, StoredReservation } from "./types";
 
 export interface CinemaServiceDeps {
   pool: pg.Pool;
 }
 
+const RESERVATION_LIFETIME_MS = 15 * 60_000;
+
+// The three conflict codes (ARCHITECTURE §3.3).
+const seatsUnavailable = (details?: { seatIds: string[] }) =>
+  conflict("SEATS_UNAVAILABLE", "One or more selected seats are no longer available", details);
+const reservationNotHeld = () =>
+  conflict(
+    "RESERVATION_NOT_HELD",
+    "This reservation is no longer held — it expired, was cancelled, or is already complete",
+  );
+const reservationAlreadyHeld = () =>
+  conflict("RESERVATION_ALREADY_HELD", "You already have a held reservation — change its seats instead");
+
+// §3.5: lock_timeout and statement_timeout. Someone else holds the lock; the remedy is the usual one.
+const LOCK_WAIT_EXCEEDED = new Set(["55P03", "57014"]);
+// §3.5: pg-pool's connectionTimeoutMillis. No SQLSTATE — the request never reached Postgres.
+const POOL_WAIT_EXCEEDED = "timeout exceeded when trying to connect";
+
+// A bounded wait ran out — someone else holds a lock or every connection.
+function waitExceeded(err: unknown) {
+  const { code, message } = (err ?? {}) as { code?: unknown; message?: unknown };
+  return (typeof code === "string" && LOCK_WAIT_EXCEEDED.has(code)) || message === POOL_WAIT_EXCEEDED;
+}
+// No details: the request never got far enough to learn which seat moved (§3.3).
+const orSeatsUnavailable = (err: unknown) =>
+  waitExceeded(err) ? Object.assign(seatsUnavailable(), { cause: err }) : err;
+
 export function createCinemaService({ pool }: CinemaServiceDeps) {
   const repository = createCinemaRepository(pool);
+
+  // READ COMMITTED; the advisory locks taken inside are released by COMMIT or ROLLBACK.
+  async function inTransaction<T>(work: (tx: CinemaRepository) => Promise<T>): Promise<T> {
+    const client = await pool.connect().catch((err: unknown) => {
+      throw orSeatsUnavailable(err);
+    });
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      const result = await work(createCinemaRepository(client));
+      await client.query("COMMIT");
+      return result;
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw orSeatsUnavailable(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  // Seats never change after seed, so their rows are read before any lock is taken.
+  // Inside the transaction, so pool.connect() is the write path's only pool wait (§3.5).
+  async function rowsOf(tx: CinemaRepository, seatIds: readonly string[]): Promise<number[]> {
+    // The service also serves callers that bypass the route's selectionRequest schema.
+    if (seatIds.length === 0) throw badRequest("Select at least one seat");
+    const found = await tx.findSeatRows(seatIds);
+    if (found.length !== new Set(seatIds).size) throw badRequest("Unknown seat id");
+    return found.map((seat) => seat.rowNumber);
+  }
+
+  // §3.1 after the user lock: seat rows in ascending order, then checked_at, then reclamation.
+  async function lockRowsAndReclaim(tx: CinemaRepository, rowNumbers: number[]): Promise<Date> {
+    const sorted = [...new Set(rowNumbers)].sort((a, b) => a - b);
+    for (const rowNumber of sorted) await tx.lockRow(rowNumber);
+    const checkedAt = await tx.checkedAt();
+    await tx.reclaimExpired(sorted, checkedAt);
+    return checkedAt;
+  }
+
+  // Re-run @cinema/seat-rules on state read under the locks; nothing from the client is trusted.
+  // The actor's own seats count as free, so a replacement may overlap them.
+  async function validate(
+    tx: CinemaRepository,
+    rowNumbers: number[],
+    seatIds: readonly string[],
+    ownReservationId?: string,
+  ) {
+    const seats = (await tx.listRowSeats(rowNumbers)).map((seat) => ({
+      id: seat.id,
+      rowNumber: seat.rowNumber,
+      seatNumber: seat.seatNumber,
+      // After reclamation, every claim left in a locked row is live.
+      occupied: seat.reservationId !== undefined && seat.reservationId !== ownReservationId,
+    }));
+    if (validateRule1(seats, seatIds)) {
+      throw badRequest("Seats must be consecutive and in one row", { rule: 1 });
+    }
+    const occupied = [...new Set(seatIds)].filter((id) => seats.find((seat) => seat.id === id)?.occupied);
+    if (occupied.length > 0) throw seatsUnavailable({ seatIds: occupied });
+
+    const violation = validateSelection(seats, seatIds);
+    if (violation?.rule === 1) throw badRequest("Seats must be consecutive and in one row", { rule: 1 });
+    // A gap: the isolated seat isn't one the client asked for, so there's nothing to name (§3.3).
+    if (violation) throw seatsUnavailable();
+  }
+
+  async function readBack(tx: CinemaRepository, id: string): Promise<ReservationResponse> {
+    const reservation = await tx.findReservation(id);
+    if (!reservation) throw new Error(`reservation ${id} vanished inside its own transaction`);
+    return toResponse(reservation);
+  }
 
   return {
     // Identical for every viewer — ownership is joined client-side (ARCHITECTURE §10) — so
@@ -26,9 +125,78 @@ export function createCinemaService({ pool }: CinemaServiceDeps) {
         })),
       };
     },
+
+    async createReservation(actor: Actor, seatIds: readonly string[]): Promise<ReservationResponse> {
+      return inTransaction(async (tx) => {
+        const requestedRows = await rowsOf(tx, seatIds);
+        await tx.lockUser(actor.userId);
+        // Possibly expired. Its row is stable under the user lock: only this user moves its seats.
+        const previous = await tx.findHeldReservationOf(actor.userId);
+        const checkedAt = await lockRowsAndReclaim(tx, [...requestedRows, ...rowOf(previous)]);
+
+        // Still held after reclamation of its row ⇒ unexpired.
+        const current = await tx.findHeldReservationOf(actor.userId);
+        if (current) {
+          // A retry whose response was lost gets the reservation it already made (§2 #31).
+          if (sameSeats(current.seatIds, seatIds)) return toResponse(current);
+          throw reservationAlreadyHeld();
+        }
+
+        await validate(tx, requestedRows, seatIds);
+        const id = await tx.insertReservation(
+          actor.userId,
+          new Date(checkedAt.getTime() + RESERVATION_LIFETIME_MS),
+        );
+        await tx.claimSeats(id, seatIds);
+        return readBack(tx, id);
+      });
+    },
+
+    // Keeps the deadline (§4). Failure rolls back everything, previous seats included (§3.4).
+    async replaceReservationSeats(
+      actor: Actor,
+      reservationId: string,
+      seatIds: readonly string[],
+    ): Promise<ReservationResponse> {
+      return inTransaction(async (tx) => {
+        const requestedRows = await rowsOf(tx, seatIds);
+        await tx.lockUser(actor.userId);
+        const target = await tx.findReservation(reservationId);
+        // Someone else's reservation doesn't exist, as far as the actor can tell (§10).
+        if (target?.userId !== actor.userId) throw notFound();
+        await lockRowsAndReclaim(tx, [...requestedRows, ...rowOf(target)]);
+
+        // Re-read: reclamation may just have cancelled it.
+        const current = await tx.findReservation(reservationId);
+        if (current?.status !== "held") throw reservationNotHeld();
+
+        await validate(tx, requestedRows, seatIds, reservationId);
+        await tx.releaseSeats(reservationId);
+        await tx.claimSeats(reservationId, seatIds);
+        return readBack(tx, reservationId);
+      });
+    },
   };
 }
 export type CinemaService = ReturnType<typeof createCinemaService>;
+
+const rowOf = (reservation?: StoredReservation) =>
+  reservation?.rowNumber === undefined ? [] : [reservation.rowNumber];
+
+const sameSeats = (a: readonly string[], b: readonly string[]) => {
+  const bs = new Set(b);
+  return a.length === bs.size && a.every((id) => bs.has(id));
+};
+
+function toResponse(reservation: StoredReservation): ReservationResponse {
+  if (reservation.status === "cancelled") throw new Error("cancelled reservation cannot be returned");
+  return {
+    id: reservation.id,
+    status: reservation.status,
+    expiresAt: reservation.expiresAt.toISOString(),
+    seatIds: reservation.seatIds,
+  };
+}
 
 // ARCHITECTURE §6's derivation table. A completed reservation never consults its deadline.
 function deriveSeatStatus({ reservation }: SeatWithReservation, checkedAt: Date): SeatStatus {

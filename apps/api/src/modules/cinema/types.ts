@@ -8,3 +8,13 @@ export interface SeatWithReservation {
   seatNumber: number;
   reservation?: { status: ReservationStatus; expiresAt: Date };
 }
+
+// A reservation as stored. `rowNumber` is the row its seats are in; unset once they're released.
+export interface StoredReservation {
+  id: string;
+  userId: string;
+  status: ReservationStatus;
+  expiresAt: Date;
+  seatIds: string[];
+  rowNumber?: number;
+}

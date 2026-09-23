@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type Seat, validateSelection } from "./index";
+import { type Seat, validateRule1, validateSelection } from "./index";
 
 // # = occupied, * = selected, . = empty. Seat IDs use "row-seat".
 function parseRow(pattern: string, rowNumber = 1): { seats: Seat[]; seatIds: string[] } {
@@ -44,6 +44,13 @@ describe("Rule 1 — seats must be consecutive and in the same row", () => {
   it("accepts consecutive seats given out of order", () => {
     const { seats } = parseRow("..........");
     expect(validateSelection(seats, ["1-7", "1-5", "1-6"])).toBeNull();
+  });
+
+  it("checks Rule 1 even when a selected seat is occupied", () => {
+    const { seats } = parseRow("..#.......");
+    expect(validateRule1(seats, ["1-1", "1-3"])).toEqual({ rule: 1 });
+    expect(validateSelection(seats, ["1-1", "1-3"])).toEqual({ rule: 1 });
+    expect(validateRule1(seats, ["1-2", "1-3"])).toBeNull();
   });
 });
 

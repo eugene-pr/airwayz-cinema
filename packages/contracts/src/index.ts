@@ -33,3 +33,21 @@ export type SeatResponse = z.infer<typeof seatResponse>;
 
 export const seatingMapResponse = z.object({ items: z.array(seatResponse) });
 export type SeatingMapResponse = z.infer<typeof seatingMapResponse>;
+
+// The seats a request asks for (ARCHITECTURE §11). Seats go by id, never by code.
+export const selectionRequest = z.object({ seatIds: z.array(z.uuid()).min(1) });
+export type SelectionRequest = z.infer<typeof selectionRequest>;
+
+export const reservationParams = z.object({ id: z.uuid() });
+
+// Reservation statuses never cross with seat statuses (§11). Cancelled is never on the wire.
+export const reservationStatus = z.enum(["held", "completed"]);
+export type ReservationStatus = z.infer<typeof reservationStatus>;
+
+export const reservationResponse = z.object({
+  id: z.uuid(),
+  status: reservationStatus,
+  expiresAt: z.iso.datetime({ offset: true }),
+  seatIds: z.array(z.uuid()),
+});
+export type ReservationResponse = z.infer<typeof reservationResponse>;

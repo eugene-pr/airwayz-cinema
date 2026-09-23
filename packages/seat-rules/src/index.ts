@@ -3,20 +3,32 @@
 export type Seat = { id: string; rowNumber: number; seatNumber: number; occupied: boolean };
 export type RuleViolation = { rule: 1 } | { rule: 2; isolatedSeatNumbers: number[] };
 
-// Check Rule 1, then Rule 2, even for a single seat.
-// Throw for an empty selection, unknown seat ID, or occupied seat.
-export function validateSelection(seats: readonly Seat[], seatIds: readonly string[]): RuleViolation | null {
+function selectedSeats(seats: readonly Seat[], seatIds: readonly string[]): Seat[] {
   const byId = new Map(seats.map((seat) => [seat.id, seat]));
   const selected = seatIds.map((id) => {
     const seat = byId.get(id);
     if (!seat) throw new Error(`unknown seat id: ${id}`);
-    if (seat.occupied) throw new Error(`selected seat is occupied: ${id}`);
     return seat;
   });
-  const first = selected[0];
-  if (!first) throw new Error("empty selection");
+  if (selected.length === 0) throw new Error("empty selection");
+  return selected;
+}
+
+// Rule 1 depends only on seat positions, so callers can apply it before checking occupancy.
+export function validateRule1(seats: readonly Seat[], seatIds: readonly string[]): { rule: 1 } | null {
+  return isRule1Met(selectedSeats(seats, seatIds)) ? null : { rule: 1 };
+}
+
+// Check Rule 1, then Rule 2, even for a single seat.
+// Throw for an empty selection, unknown seat ID, or occupied seat.
+export function validateSelection(seats: readonly Seat[], seatIds: readonly string[]): RuleViolation | null {
+  const selected = selectedSeats(seats, seatIds);
 
   if (!isRule1Met(selected)) return { rule: 1 };
+  for (const seat of selected) {
+    if (seat.occupied) throw new Error(`selected seat is occupied: ${seat.id}`);
+  }
+  const first = selected[0] as Seat;
 
   const row = seats.filter((seat) => seat.rowNumber === first.rowNumber);
   const occupied = new Set(row.filter((seat) => seat.occupied).map((seat) => seat.seatNumber));

@@ -11,9 +11,10 @@ const TEST_DATABASE_URL = "postgres://cinema:cinema@localhost:5433/cinema_test";
 
 export const silentLogger = pino({ level: "silent" });
 
-export async function testPool() {
+// `config` overrides pool settings, e.g. `options: "-c lock_timeout=200ms"` for the bounded-wait tests.
+export async function testPool(config?: Omit<pg.PoolConfig, "connectionString">) {
   await migrate(TEST_DATABASE_URL, silentLogger);
-  const pool = new pg.Pool({ connectionString: TEST_DATABASE_URL });
+  const pool = new pg.Pool({ ...config, connectionString: TEST_DATABASE_URL });
   // Seats are the fixed seating map, not per-file fixtures: every file shares them.
   await seedSeats(pool);
   return pool;

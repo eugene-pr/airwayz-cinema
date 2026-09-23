@@ -10,6 +10,8 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   const known = toAppError(err);
   if (known) {
     const { code, message, details } = known;
+    // A 4xx with a cause is a server-side signal too, e.g. a lock-wait timeout (ARCHITECTURE §3.5).
+    if (known.cause) req.log.warn({ err: known.cause }, message);
     res.status(known.status).json({ error: details ? { code, message, details } : { code, message } });
     return;
   }

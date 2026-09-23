@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@cinema/contracts": "*",
+    "@cinema/seat-rules": "*",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "express": "^5.2.1",
