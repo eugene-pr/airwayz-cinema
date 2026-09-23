@@ -1,12 +1,14 @@
-import { runner } from "node-pg-migrate";
 import pg from "pg";
 import { pino } from "pino";
 import { createApp } from "./app";
 import { config } from "./config";
+import { migrate } from "./migrate";
 
-const MIGRATIONS_DIR = new URL("../../../database/migrations", import.meta.url).pathname;
-
-const logger = pino({ level: config.logLevel });
+// The JWT rides in the cookie header; it never reaches the log.
+const logger = pino({
+  level: config.logLevel,
+  redact: ["req.headers.cookie", 'res.headers["set-cookie"]'],
+});
 
 // Bounded waits (ARCHITECTURE §3.5), set once on the pool.
 const pool = new pg.Pool({
@@ -17,16 +19,9 @@ const pool = new pg.Pool({
 // An idle client losing its connection emits here; unhandled, it kills the process.
 pool.on("error", (err) => logger.error({ err }, "idle pg client error"));
 
-await runner({
-  databaseUrl: config.databaseUrl,
-  dir: MIGRATIONS_DIR,
-  direction: "up",
-  migrationsTable: "pgmigrations",
-  advisoryLockMode: "wait",
-  logger: logger.child({ component: "migrate" }),
-});
+await migrate(config.databaseUrl, logger);
 
-const server = createApp({ pool, logger }).listen(config.port, () => {
+const server = createApp({ pool, logger, jwtSecret: config.jwtSecret }).listen(config.port, () => {
   logger.info({ port: config.port }, "api listening");
 });
 

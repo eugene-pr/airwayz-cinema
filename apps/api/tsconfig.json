@@ -1,5 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "types": ["node"] },
-  "include": ["src"]
+  // Seeds aren't a workspace; they share the api's deps, so its typecheck covers them.
+  "include": ["src", "../../database/seeds"]
 }
