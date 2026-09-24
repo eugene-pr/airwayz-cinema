@@ -1,0 +1,285 @@
+/* Airwayz brand palette (airwayz.co Elementor globals). */
+:root {
+  --navy: #06103b;
+  --navy-2: #0b1a55;
+  --navy-3: #2a3a72;
+  --cyan: #00edff;
+  --teal: #0086af;
+  --lime: #89ff00;
+  --ink: #f8fbff;
+  --muted: #c8c8d2;
+  --danger: #ff6b81;
+  --line: rgba(0, 237, 255, 0.18);
+  --radius: 14px;
+
+  font-family: "Poppins", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--navy);
+}
+
+body {
+  display: flow-root; /* keep child margins inside, so the gradient reaches the top */
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(60rem 30rem at 50% -10%, rgba(0, 237, 255, 0.14), transparent 70%),
+    linear-gradient(180deg, var(--navy-2), var(--navy));
+}
+
+main,
+.login {
+  max-width: 46rem;
+  margin: 2.5rem auto;
+  padding: 0 1rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--cyan);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.notice {
+  color: var(--danger);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+header h1 {
+  margin-right: auto;
+}
+
+/* Buttons: cyan pill by default, outlined "ghost" for secondary actions. */
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+button:not(.seat) {
+  padding: 0.55rem 1.3rem;
+  border: 1px solid var(--cyan);
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--navy);
+  background: var(--cyan);
+  transition:
+    box-shadow 0.15s,
+    opacity 0.15s;
+}
+
+button:not(.seat):hover:not(:disabled) {
+  box-shadow: 0 0 18px rgba(0, 237, 255, 0.45);
+}
+
+button.ghost {
+  color: var(--cyan);
+  background: transparent;
+}
+
+button:not(.seat):disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+/* Login card */
+.login {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 22rem;
+  margin-top: 12vh;
+  padding: 2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(6px);
+}
+
+.login label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.login input {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--navy-3);
+  border-radius: 10px;
+  font: inherit;
+  color: var(--ink);
+  background: rgba(6, 16, 59, 0.6);
+}
+
+.login input:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+
+/* Seating map */
+.seating-map {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 2rem 0 1.5rem;
+  padding: 1.5rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.screen {
+  width: 80%;
+  margin-bottom: 1.5rem;
+  padding-top: 0.6rem;
+  border-top: 3px solid var(--cyan);
+  border-radius: 50% 50% 0 0 / 1.2rem 1.2rem 0 0;
+  box-shadow: 0 -8px 24px -8px rgba(0, 237, 255, 0.6);
+  font-size: 0.7rem;
+  letter-spacing: 0.4em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.row-label {
+  width: 1.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.seat {
+  width: 2.3rem;
+  height: 2.3rem;
+  border: 1.5px solid transparent;
+  border-radius: 10px 10px 6px 6px;
+  font-size: 0.75rem;
+  color: var(--ink);
+  transition:
+    transform 0.1s,
+    box-shadow 0.15s;
+}
+
+button.seat:not(:disabled):hover {
+  transform: translateY(-2px);
+  border-color: var(--cyan);
+}
+
+button.seat:disabled {
+  cursor: not-allowed;
+}
+
+.seat.available {
+  background: var(--navy-3);
+}
+
+.seat.reserved {
+  background: rgba(0, 134, 175, 0.35);
+  border-color: var(--teal);
+  color: var(--muted);
+}
+
+.seat.booked {
+  background: rgba(200, 200, 210, 0.12);
+  color: rgba(200, 200, 210, 0.5);
+}
+
+.seat.own {
+  border: 1.5px dashed var(--lime);
+}
+
+.seat.selected {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: var(--navy);
+  font-weight: 600;
+  box-shadow: 0 0 14px rgba(0, 237, 255, 0.55);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.legend .seat {
+  width: auto;
+  height: auto;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+/* Seating page: map + legend, then action panel — side by side on wide screens. */
+main.seating {
+  max-width: 64rem;
+}
+
+.layout {
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* Action panel: text lines full width, buttons side by side. */
+.panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.panel p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.panel time {
+  font-variant-numeric: tabular-nums;
+  color: var(--cyan);
+}
+
+/* Wide screens: panel is a sticky right sidebar, aligned with the map top; buttons stacked. */
+@media (min-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 18rem;
+    align-items: start;
+    gap: 1.5rem;
+  }
+
+  .panel {
+    display: grid;
+    position: sticky;
+    top: 1.5rem;
+    margin-top: 2rem;
+  }
+}
