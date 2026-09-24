@@ -20,6 +20,11 @@ const RESERVATION_LIFETIME_MS = 15 * 60_000;
 // The three conflict codes (ARCHITECTURE §3.3).
 const seatsUnavailable = (details?: { seatIds: string[] }) =>
   conflict("SEATS_UNAVAILABLE", "One or more selected seats are no longer available", details);
+// Same code: in a race, the seats the other request got are what make this selection isolate a seat.
+const isolatedSeat = () =>
+  conflict("SEATS_UNAVAILABLE", "This selection would leave a single empty seat between occupied ones", {
+    rule: 2,
+  });
 const reservationNotHeld = () =>
   conflict(
     "RESERVATION_NOT_HELD",
@@ -101,8 +106,8 @@ export function createCinemaService({ pool }: CinemaServiceDeps) {
 
     // Rule 1 already passed above, so any violation left is Rule 2.
     const violation = validateSelection(seats, seatIds);
-    // A gap: the isolated seat isn't one the client asked for, so there's nothing to name (§3.3).
-    if (violation) throw seatsUnavailable();
+    // The isolated seat isn't one the client asked for, so `details` names the rule, not seats (§3.3).
+    if (violation) throw isolatedSeat();
   }
 
   // §3.1 user lock, then the owner check. Someone else's reservation doesn't exist, as far as

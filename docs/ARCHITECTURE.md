@@ -76,7 +76,7 @@ Seats and reservations share a module (§1), so no transaction crosses modules.
 
 Three `409` codes, one per remedy:
 
-- `SEATS_UNAVAILABLE`: someone else got there first. Reselect. `details.seatIds` names directly taken seats.
+- `SEATS_UNAVAILABLE`: someone else got there first. Reselect. `details.seatIds` names requested seats that are occupied. `details.rule: 2` means the selection would leave an isolated seat; in a race, the other request's seats cause it. No details: a lock wait ran out (§3.5).
 - `RESERVATION_NOT_HELD`: your reservation expired, was cancelled or completed. Start again.
 - `RESERVATION_ALREADY_HELD`: you already hold one. Change its seats instead.
 

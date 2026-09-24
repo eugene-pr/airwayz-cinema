@@ -213,8 +213,8 @@ describe("createReservation", () => {
     const { fulfilled, rejected } = fulfilledAndRejected(await racing);
 
     expect(fulfilled).toHaveLength(1);
-    // A gap cause names no requested seat (§3.3).
-    expect(rejected[0]).toMatchObject({ code: "SEATS_UNAVAILABLE", details: undefined });
+    // The loser would isolate A3: it names the rule, not a requested seat (§3.3).
+    expect(rejected[0]).toMatchObject({ code: "SEATS_UNAVAILABLE", details: { rule: 2 } });
     expect(await statuses("A3")).toEqual(["available"]);
     expect((await statuses("A1", "A2", "A4", "A5")).filter((s) => s === "reserved")).toHaveLength(2);
   });
@@ -308,7 +308,7 @@ describe("createReservation", () => {
 
     await expect(cinema.createReservation(alice, ids("A3"))).rejects.toMatchObject({
       code: "SEATS_UNAVAILABLE",
-      details: undefined,
+      details: { rule: 2 },
     });
   });
 
@@ -414,7 +414,7 @@ describe("replaceReservationSeats", () => {
 
     await expect(cinema.replaceReservationSeats(alice, held.id, ids("A3", "A4"))).rejects.toMatchObject({
       code: "SEATS_UNAVAILABLE",
-      details: undefined,
+      details: { rule: 2 },
     });
     expect(await claimedCodesOf(held.id)).toEqual(["A2", "A3"]);
   });
