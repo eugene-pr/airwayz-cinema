@@ -12,7 +12,7 @@
     "lint": "biome check .",
     "test": "vitest run --passWithNoTests",
     "dev": "docker compose up --build",
-    "migrate": "node --env-file=.env.example --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js up -m database/migrations",
+    "migrate": "node --env-file=.env.example --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js up -m database/migrations --advisory-lock-mode wait",
     "seed": "node --env-file=.env.example --env-file-if-exists=.env --import tsx database/seeds/seed.ts"
   }
 }

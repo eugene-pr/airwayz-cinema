@@ -1,4 +1,4 @@
-// Every fetch in apps/web goes through here (CLAUDE.md). Errors keep the wire's
+// Every fetch in apps/web goes through here. Errors keep the wire's
 // { error: { code, message } } so callers can branch on status and code.
 export class ApiError extends Error {
   constructor(
