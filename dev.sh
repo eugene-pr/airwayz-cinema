@@ -18,8 +18,7 @@ case "${1:-}" in
   fresh)
     docker compose down -v --remove-orphans
     docker compose up --build -d
-    wait_api # api runs migrations on boot
-    npm run seed
+    wait_api # api migrates and seeds on boot
     echo
     echo "web:   http://localhost:5173"
     echo "login: alice|bob|carol|dave|erin @example.com / password"
@@ -34,7 +33,7 @@ case "${1:-}" in
   *)
     cat <<EOF
 usage: ./dev.sh <cmd>
-  fresh       wipe db volume, rebuild, start, migrate, seed
+  fresh       wipe db volume, rebuild, start (api migrates + seeds)
   reset-db    clear all reservations, keep users + seats
   logs [svc]  follow compose logs (api|web|db)
 EOF

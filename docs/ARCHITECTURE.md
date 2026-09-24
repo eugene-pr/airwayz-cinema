@@ -39,9 +39,9 @@ Two backend modules, each owning its tables: **auth** and **cinema**. `cinema` h
 | 25 | Correlation id | `x-request-id` response header | Error body shape stays fixed |
 | 26 | Auth token | HS256, 8h, cookie `SameSite=Strict`; bad token → `401` | Strict is free on one origin |
 | 27 | Login timing | Unknown email still runs a bcrypt compare | No timing leak between unknown email and wrong password |
-| 28 | Seed | `seed.ts`, idempotent; five users, password `password` | Re-runnable, no psql needed |
+| 28 | Seed | `seedDev()`, idempotent; five users, password `password`; run by api boot after migrations, and by `npm run seed` | `docker compose up` alone is usable; re-runnable, no psql needed |
 | 29 | Test DB | Tests migrate `db-test` themselves; each file creates its own users | Files run in parallel without sharing rows |
-| 30 | Seat seed | `seedSeats()` shared by `npm run seed` and tests | One layout, migrations stay schema-only |
+| 30 | Seat seed | `seedSeats()` shared by the seed and tests | One layout, migrations stay schema-only |
 | 31 | Create while holding | `409 RESERVATION_ALREADY_HELD`; the same seats return the existing reservation | A retried create succeeds |
 | 32 | Rule 1 / unknown seat | `400 BAD_REQUEST` | The request is wrong on its own |
 | 33 | Pool timeout | Plain `500` | §3.5 |
@@ -149,6 +149,7 @@ Shortcut → what production would do:
 - No build step, Vite dev server in compose → compiled image; static build behind a CDN.
 - No screenings → a `screenings` table in every query and lock key.
 - No E2E test → Playwright for the two-user race.
+- Dev users seeded on every boot → no seed in production; accounts provisioned elsewhere.
 
 ## 9. Assumptions
 
@@ -158,6 +159,8 @@ Where the brief is open, this is how it was read:
 - A row's edges are its first and last seats; there are no aisles (§5.3).
 - Cancellation is supported, though the brief doesn't ask for it: otherwise released seats would wait out the 15 minutes.
 - An expired reservation is stored as `cancelled`; nothing needs to tell the two apart (§6).
+- "Once a seat is selected, it becomes unavailable to other users": clicking seats builds a local draft; they become unavailable to others when the user reserves them (`POST /api/reservations`), which starts the 15-minute hold. Holding per click would mean a write per click and a hold on half-picked selections.
+- Rule 2 ("any gap … that remains") rejects only gaps the selection creates. An existing one-seat gap, left by an expired or cancelled reservation, doesn't block unrelated selections elsewhere in the row (§5.2).
 
 ## 10. Wire surface
 

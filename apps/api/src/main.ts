@@ -1,5 +1,6 @@
 import pg from "pg";
 import { pino } from "pino";
+import { seedDev } from "../../../database/seeds/dev";
 import { createApp } from "./app";
 import { config } from "./config";
 import { migrate } from "./migrate";
@@ -20,6 +21,8 @@ const pool = new pg.Pool({
 pool.on("error", (err) => logger.error({ err }, "idle pg client error"));
 
 await migrate(config.databaseUrl, logger);
+// Dev users + seating map, so `docker compose up` alone is usable (ARCHITECTURE §2 #28).
+logger.info({ inserted: await seedDev(pool) }, "seeded");
 
 const server = createApp({ pool, logger, jwtSecret: config.jwtSecret }).listen(config.port, () => {
   logger.info({ port: config.port }, "api listening");

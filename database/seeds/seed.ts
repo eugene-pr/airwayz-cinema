@@ -1,36 +1,14 @@
-// Idempotent, re-runnable: `npm run seed`. Assumes migrations have run.
-import bcrypt from "bcryptjs";
+// `npm run seed`: the api also seeds on boot, so this is only for re-seeding by hand.
 import pg from "pg";
-import { seedSeats } from "./seats";
-
-// Dev logins (ARCHITECTURE §2 #28). No registration exists (ARCHITECTURE §2 #8), so these are the only users.
-const USERS = [
-  { email: "alice@example.com", password: "password" },
-  { email: "bob@example.com", password: "password" },
-  { email: "carol@example.com", password: "password" },
-  { email: "dave@example.com", password: "password" },
-  { email: "erin@example.com", password: "password" },
-];
+import { seedDev } from "./dev";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is not set");
 
-const client = new pg.Client({ connectionString: databaseUrl });
-await client.connect();
+const pool = new pg.Pool({ connectionString: databaseUrl });
 try {
-  await client.query("BEGIN");
-  for (const { email, password } of USERS) {
-    const { rowCount } = await client.query(
-      "INSERT INTO users (email, password_hash) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING",
-      [email, await bcrypt.hash(password, 10)],
-    );
-    process.stdout.write(`users: ${email} ${rowCount ? "inserted" : "already present"}\n`);
-  }
-  process.stdout.write(`seats: ${await seedSeats(client)} inserted\n`);
-  await client.query("COMMIT");
-} catch (err) {
-  await client.query("ROLLBACK");
-  throw err;
+  const { users, seats } = await seedDev(pool);
+  process.stdout.write(`inserted: ${users} users, ${seats} seats\n`);
 } finally {
-  await client.end();
+  await pool.end();
 }
