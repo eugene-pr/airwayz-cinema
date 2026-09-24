@@ -84,7 +84,8 @@ export function createCinemaService({ pool }: CinemaServiceDeps) {
   }
 
   // Re-run @cinema/seat-rules on state read under the locks; nothing from the client is trusted.
-  // The actor's own seats count as free, so a replacement may overlap them.
+  // The actor's own seats count as free and replaced, so a replacement may overlap them and
+  // an isolated seat they already bordered stays tolerated (§5.2).
   async function validate(
     tx: CinemaRepository,
     rowNumbers: number[],
@@ -97,6 +98,7 @@ export function createCinemaService({ pool }: CinemaServiceDeps) {
       seatNumber: seat.seatNumber,
       // After reclamation, every claim left in a locked row is live.
       occupied: seat.reservationId !== undefined && seat.reservationId !== ownReservationId,
+      replaced: seat.reservationId !== undefined && seat.reservationId === ownReservationId,
     }));
     if (validateRule1(seats, seatIds)) {
       throw badRequest("Seats must be consecutive and in one row", { rule: 1 });

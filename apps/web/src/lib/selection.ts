@@ -8,7 +8,7 @@ export type DraftViolation =
   | { kind: "rule1" }
   | { kind: "rule2"; codes: string[] };
 
-// The actor's own held seats count as unoccupied: replacing the selection releases them.
+// The actor's own held seats count as unoccupied and replaced: replacing the selection releases them.
 export function checkDraft(
   seats: readonly SeatResponse[],
   ownHeldSeatIds: ReadonlySet<string>,
@@ -29,6 +29,7 @@ export function checkDraft(
     rowNumber: rowLabels.indexOf(seat.rowLabel),
     seatNumber: seat.seatNumber,
     occupied: occupied(seat),
+    replaced: ownHeldSeatIds.has(seat.id) && seat.status !== "available",
   }));
 
   const violation = validateSelection(ruleSeats, draft);

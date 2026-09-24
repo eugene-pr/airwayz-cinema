@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { type Seat, validateRule1, validateSelection } from "./index";
 
-// # = occupied, * = selected, . = empty. Seat IDs use "row-seat".
+// # = occupied, * = selected, . = empty, o = replaced, @ = replaced and selected. Seat IDs use "row-seat".
 function parseRow(pattern: string, rowNumber = 1): { seats: Seat[]; seatIds: string[] } {
   const seats = [...pattern].map((cell, i) => ({
     id: `${rowNumber}-${i + 1}`,
     rowNumber,
     seatNumber: i + 1,
     occupied: cell === "#",
+    replaced: cell === "o" || cell === "@",
   }));
-  const seatIds = seats.filter((_, i) => pattern[i] === "*").map((seat) => seat.id);
+  const seatIds = seats.filter((_, i) => pattern[i] === "*" || pattern[i] === "@").map((seat) => seat.id);
   return { seats, seatIds };
 }
 
@@ -79,6 +80,10 @@ describe("Rule 2 — validates the delta, pre-existing isolated seats are tolera
     ["#*#.......", "selection fills the existing gap", null],
     ["#.#.*.....", "reports only the new isolated seat", { rule: 2, isolatedSeatNumbers: [4] }],
     ["#.#**", "5-seat row: isolated seat 2 already exists", null],
+    ["#.@*......", "replacement extends past an isolated seat that already exists", null],
+    ["#.o**.....", "replacement moves away from an isolated seat that already exists", null],
+    ["#o*.......", "replacement releases a seat it then isolates", { rule: 2, isolatedSeatNumbers: [2] }],
+    ["o..#.*....", "replacement still reports a new isolated seat", { rule: 2, isolatedSeatNumbers: [5] }],
   ])("%s  %s", (pattern, _title, expected) => {
     expect(validate(pattern)).toEqual(expected);
   });

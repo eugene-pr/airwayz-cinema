@@ -419,6 +419,18 @@ describe("replaceReservationSeats", () => {
     expect(await claimedCodesOf(held.id)).toEqual(["A2", "A3"]);
   });
 
+  // A2 was isolated before the change, so extending past it creates no new isolated seat (§5.2).
+  it("accepts a replacement bordering an isolated seat that already exists", async () => {
+    const [alice, bob, carol] = [await newActor(), await newActor(), await newActor()];
+    await cinema.completeReservation(carol, (await cinema.createReservation(carol, ids("A1"))).id);
+    const bobs = await cinema.createReservation(bob, ids("A2"));
+    const held = await cinema.createReservation(alice, ids("A3"));
+    await cinema.cancelReservation(bob, bobs.id);
+
+    await cinema.replaceReservationSeats(alice, held.id, ids("A3", "A4"));
+    expect(await claimedCodesOf(held.id)).toEqual(["A3", "A4"]);
+  });
+
   it("concurrent replacements by the same user leave one intact selection with no leftover claims", async () => {
     const alice = await newActor();
     const held = await cinema.createReservation(alice, ids("A1", "A2"));

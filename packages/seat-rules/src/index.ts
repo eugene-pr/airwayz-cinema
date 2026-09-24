@@ -1,6 +1,12 @@
-// Occupied means reserved or booked by someone else. Mark the user's current seats as unoccupied.
-// Include the whole selected row, numbered 1 through N.
-export type Seat = { id: string; rowNumber: number; seatNumber: number; occupied: boolean };
+// Occupied means reserved or booked by someone else. The user's current seats are unoccupied and
+// replaced: the selection releases them. Include the whole selected row, numbered 1 through N.
+export type Seat = {
+  id: string;
+  rowNumber: number;
+  seatNumber: number;
+  occupied: boolean;
+  replaced?: boolean;
+};
 export type RuleViolation = { rule: 1 } | { rule: 2; isolatedSeatNumbers: number[] };
 
 function selectedSeats(seats: readonly Seat[], seatIds: readonly string[]): Seat[] {
@@ -31,19 +37,19 @@ export function validateSelection(seats: readonly Seat[], seatIds: readonly stri
   const first = selected[0] as Seat;
 
   const row = seats.filter((seat) => seat.rowNumber === first.rowNumber);
-  const occupied = new Set(row.filter((seat) => seat.occupied).map((seat) => seat.seatNumber));
   const numbers = selected.map((seat) => seat.seatNumber);
+  const occupiedNumbers = (keep: (seat: Seat) => boolean | undefined) =>
+    new Set(row.filter(keep).map((seat) => seat.seatNumber));
+  const before = occupiedNumbers((seat) => seat.occupied || seat.replaced);
+  const after = new Set([...occupiedNumbers((seat) => seat.occupied), ...numbers]);
   const lo = Math.min(...numbers);
   const hi = Math.max(...numbers);
 
-  // Rule 2: only seats just outside the selection can become newly isolated.
-  // Reject an empty neighbour if its other side is occupied. Ignore existing isolated seats.
-  // Row edges pass because there is no occupied seat beyond the row.
-  const isIsolated = (n: number, farSide: number) => !occupied.has(n) && occupied.has(farSide);
-  const isolatedSeatNumbers = [
-    ...(isIsolated(lo - 1, lo - 2) ? [lo - 1] : []),
-    ...(isIsolated(hi + 1, hi + 2) ? [hi + 1] : []),
-  ];
+  // Rule 2: only seats just outside the selection can become newly isolated. Ignore one that was
+  // already isolated before the change (§5.2). Row edges pass: no occupied seat lies beyond the row.
+  const isIsolated = (occupied: Set<number>, n: number) =>
+    !occupied.has(n) && occupied.has(n - 1) && occupied.has(n + 1);
+  const isolatedSeatNumbers = [lo - 1, hi + 1].filter((n) => isIsolated(after, n) && !isIsolated(before, n));
   return isolatedSeatNumbers.length > 0 ? { rule: 2, isolatedSeatNumbers } : null;
 }
 

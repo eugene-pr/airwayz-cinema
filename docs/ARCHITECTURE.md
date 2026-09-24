@@ -106,7 +106,7 @@ Rule 2 applies to single-seat selections too: one seat can isolate its neighbour
 
 ### 5.2 Existing gaps
 
-A selection is valid if it creates no **new** isolated seat. Old gaps from expiry or cancellation are tolerated.
+A selection is valid if it creates no **new** isolated seat. Old gaps from expiry or cancellation are tolerated. For a replacement, "old" means before the change: the actor's replaced seats still count as occupied there, then as released after it.
 
 ### 5.3 Row edges
 
@@ -196,4 +196,5 @@ Where the brief is open, this is how it was read:
 | isolated seat | One empty seat between occupied ones (Rule 2) |
 | selection / draft | Seats a request asks for / seats being picked in the UI |
 | claim | One `seat_claims` row |
+| replaced seat | A seat of the actor's held reservation that a new selection releases |
 | actor | The logged-in caller a service acts for |
